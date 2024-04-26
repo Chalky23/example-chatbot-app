@@ -1,0 +1,21 @@
+.chatbot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: auto;
+  margin-top: 5vw;
+  padding: 20px;
+  width: 50vw;
+  border: 1px solid black;
+  border-radius: 5px;
+}
+
+.chatHistory {
+  max-width: 40vw;
+}
+
+.inputField {
+  margin-top: 3vw;
+  border-radius: 5px;
+  width: 30vw;
+}
