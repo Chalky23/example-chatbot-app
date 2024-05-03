@@ -1,15 +1,23 @@
 "use client";
 
 import { useChat } from "ai/react";
+import Image from "next/image";
 
 export default function Chat() {
   const { messages, input, handleInputChange, handleSubmit } = useChat();
   return (
     <div className="chatbot">
-      <h1>Try out the chatbot below:</h1>
+      <Image
+        src="/jackbot-img.jpeg"
+        className="image"
+        width={200}
+        height={200}
+        alt="jackbot image"
+      />
+      <h1>Hi, I&apos;m JackBot! </h1>
       {messages.map((m) => (
         <div key={m.id} className="chatHistory">
-          {m.role === "user" ? "User: " : "AI: "}
+          {m.role === "user" ? "You: " : "JackBot: "}
           {m.content}
         </div>
       ))}
@@ -18,7 +26,7 @@ export default function Chat() {
         <input
           className="inputField"
           value={input}
-          placeholder="Ask me anything!"
+          placeholder="Ask me anything."
           onChange={handleInputChange}
         />
       </form>

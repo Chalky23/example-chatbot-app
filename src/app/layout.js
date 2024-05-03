@@ -4,8 +4,9 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata = {
-  title: "Example Chatbot",
-  description: "Learn to implement your own chatbot in next.js",
+  title: "JackBot",
+  description:
+    "Your very own chatbot, for those times when the workplace web filter doesn't like ChatGPT",
 };
 
 export default function RootLayout({ children }) {

@@ -8,6 +8,7 @@
   width: 50vw;
   border: 1px solid black;
   border-radius: 5px;
+  background-color: rgb(223, 172, 42);
 }
 
 .chatHistory {
@@ -18,4 +19,8 @@
   margin-top: 3vw;
   border-radius: 5px;
   width: 30vw;
+}
+
+.image {
+  border-radius: 20px;
 }
