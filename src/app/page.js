@@ -10,8 +10,12 @@ export default function Chat() {
   const [copiedMessageId, setCopiedMessageId] = useState(null);
   const { messages, input, handleInputChange, handleSubmit } = useChat({
     onFinish: (message) => {
-      // Save messages to localStorage whenever a new message is added
-      const updatedMessages = [...messages, message];
+      // Ensure message has a createdAt timestamp
+      const messageWithTimestamp = {
+        ...message,
+        createdAt: message.createdAt || Date.now(),
+      };
+      const updatedMessages = [...messages, messageWithTimestamp];
       localStorage.setItem('chatHistory', JSON.stringify(updatedMessages));
     }
   });
@@ -102,6 +106,7 @@ export default function Chat() {
                     onClick={() => handleCopyMessage(m.content, m.id)}
                     className={`copy-button ${copiedMessageId === m.id ? 'copied' : ''}`}
                     title="Copy message"
+                    aria-label={copiedMessageId === m.id ? 'Copied!' : 'Copy message'}
                   >
                     {copiedMessageId === m.id ? <CheckIcon /> : <CopyIcon />}
                   </button>
@@ -148,7 +153,7 @@ export default function Chat() {
                 </ReactMarkdown>
               </div>
               <div className="message-timestamp">
-                {new Date(m.createdAt || Date.now()).toLocaleTimeString()}
+                {new Date(m.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </div>
             </div>
           </div>
