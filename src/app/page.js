@@ -3,9 +3,11 @@
 import { useChat } from "ai/react";
 import Image from "next/image";
 import { useEffect, useState } from "react";
+import ReactMarkdown from 'react-markdown';
 
 export default function Chat() {
   const [isLoading, setIsLoading] = useState(true);
+  const [copiedMessageId, setCopiedMessageId] = useState(null);
   const { messages, input, handleInputChange, handleSubmit } = useChat({
     onFinish: (message) => {
       // Save messages to localStorage whenever a new message is added
@@ -34,6 +36,48 @@ export default function Chat() {
     window.location.reload();
   };
 
+  const handleCopyMessage = async (content, messageId) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedMessageId(messageId);
+      // Reset the copied state after 2 seconds
+      setTimeout(() => setCopiedMessageId(null), 2000);
+    } catch (err) {
+      console.error('Failed to copy message:', err);
+    }
+  };
+
+  const CopyIcon = () => (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+
+  const CheckIcon = () => (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  );
+
   return (
     <div className="chatbot">
       <Image
@@ -51,8 +95,58 @@ export default function Chat() {
             className={`message ${m.role === "user" ? "user-message" : "bot-message"}`}
           >
             <div className="message-content">
-              <div className="message-role">{m.role === "user" ? "You" : "JackBot"}</div>
-              <div className="message-text">{m.content}</div>
+              <div className="message-header">
+                <div className="message-role">{m.role === "user" ? "You" : "JackBot"}</div>
+                {m.role === "assistant" && (
+                  <button
+                    onClick={() => handleCopyMessage(m.content, m.id)}
+                    className={`copy-button ${copiedMessageId === m.id ? 'copied' : ''}`}
+                    title="Copy message"
+                  >
+                    {copiedMessageId === m.id ? <CheckIcon /> : <CopyIcon />}
+                  </button>
+                )}
+              </div>
+              <div className="message-text">
+                <ReactMarkdown
+                  components={{
+                    // Style code blocks
+                    code({ node, inline, className, children, ...props }) {
+                      return (
+                        <code className={`${className} ${inline ? 'inline-code' : 'code-block'}`} {...props}>
+                          {children}
+                        </code>
+                      );
+                    },
+                    // Style links
+                    a({ node, children, ...props }) {
+                      return (
+                        <a className="markdown-link" {...props}>
+                          {children}
+                        </a>
+                      );
+                    },
+                    // Style lists
+                    ul({ node, children, ...props }) {
+                      return (
+                        <ul className="markdown-list" {...props}>
+                          {children}
+                        </ul>
+                      );
+                    },
+                    // Style blockquotes
+                    blockquote({ node, children, ...props }) {
+                      return (
+                        <blockquote className="markdown-blockquote" {...props}>
+                          {children}
+                        </blockquote>
+                      );
+                    }
+                  }}
+                >
+                  {m.content}
+                </ReactMarkdown>
+              </div>
               <div className="message-timestamp">
                 {new Date(m.createdAt || Date.now()).toLocaleTimeString()}
               </div>
