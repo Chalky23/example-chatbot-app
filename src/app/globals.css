@@ -247,6 +247,54 @@ body.dark-mode h1 {
   box-shadow: 0 2px 8px rgba(0,122,255,0.15);
 }
 
+.mic-button {
+  padding: 0.8rem;
+  background: #f0f0f0;
+  color: #666;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 0.5rem;
+}
+
+.mic-button:hover {
+  background: #e0e0e0;
+  color: #333;
+}
+
+.mic-button.listening {
+  background: #800000;
+  color: white;
+  animation: pulse-maroon 1.5s infinite;
+}
+
+.mic-button[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mic-listening-label {
+  color: #800000;
+  font-weight: 600;
+  margin-left: 0.5rem;
+  font-size: 1rem;
+  letter-spacing: 0.5px;
+}
+
+body.dark-mode .mic-button {
+  background: #2a2a2a;
+  color: #e0e0e0;
+}
+
+body.dark-mode .mic-button:hover {
+  background: #3a3a3a;
+  color: white;
+}
+
 .image {
   border-radius: 20px;
   animation: fadeIn 1s ease forwards;
@@ -405,4 +453,14 @@ h1 {
 .header-dark-toggle:hover, .header-dark-toggle:focus {
   text-decoration: underline;
   color: #ffd6e0;
+}
+
+.loading-label {
+  width: 100%;
+  text-align: center;
+  color: #800000;
+  font-weight: 600;
+  font-size: 1rem;
+  margin-top: 0.5rem;
+  letter-spacing: 0.5px;
 }

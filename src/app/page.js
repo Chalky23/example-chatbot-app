@@ -2,13 +2,18 @@
 
 import { useChat } from "ai/react";
 import Image from "next/image";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import ReactMarkdown from 'react-markdown';
 
 export default function Chat() {
   const [isLoading, setIsLoading] = useState(true);
   const [copiedMessageId, setCopiedMessageId] = useState(null);
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
   const { messages, input, handleInputChange, handleSubmit } = useChat({
     onFinish: (message) => {
       // Ensure message has a createdAt timestamp
@@ -110,6 +115,59 @@ export default function Chat() {
       console.error('Failed to copy message:', err);
     }
   };
+
+  const handleRecordClick = async () => {
+    if (isRecording) {
+      // Stop recording
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      return;
+    }
+    // Start recording
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new window.MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+      mediaRecorder.onstop = async () => {
+        setIsTranscribing(true);
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const formData = new FormData();
+        formData.append('audio', audioBlob, 'recording.webm');
+        try {
+          const response = await fetch('/api/transcribe', {
+            method: 'POST',
+            body: formData,
+          });
+          const data = await response.json();
+          if (data.text) {
+            handleInputChange({ target: { value: data.text } });
+          }
+        } catch (err) {
+          alert('Transcription failed.');
+        }
+        setIsTranscribing(false);
+      };
+      mediaRecorder.start();
+      setIsRecording(true);
+    } catch (err) {
+      alert('Could not access microphone.');
+    }
+  };
+
+  const MicrophoneIcon = () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="2" width="6" height="12" rx="3" />
+      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+      <line x1="12" y1="22" x2="12" y2="16" />
+      <line x1="8" y1="22" x2="16" y2="22" />
+    </svg>
+  );
 
   const CopyIcon = () => (
     <svg
@@ -228,10 +286,23 @@ export default function Chat() {
             placeholder="Ask me anything..."
             onChange={handleInputChange}
           />
+          <button
+            type="button"
+            onClick={handleRecordClick}
+            className={`mic-button ${isRecording ? 'listening' : ''}`}
+            title={isRecording ? 'Stop recording' : 'Record voice input'}
+            aria-label={isRecording ? 'Stop recording' : 'Record voice input'}
+            disabled={isTranscribing}
+          >
+            <MicrophoneIcon />
+          </button>
           <button type="submit" className="send-button">
             Send
           </button>
         </form>
+        {isTranscribing && (
+          <div className="loading-label">Loading...</div>
+        )}
       </div>
     </div>
   );
