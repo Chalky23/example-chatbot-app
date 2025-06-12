@@ -4,6 +4,9 @@ import { useChat } from "ai/react";
 import Image from "next/image";
 import { useEffect, useState, useRef } from "react";
 import ReactMarkdown from 'react-markdown';
+import { supabase } from '../utils/supabaseClient';
+import AuthForm from './auth/AuthForm';
+import './page.css';
 
 export default function Chat() {
   const [isLoading, setIsLoading] = useState(true);
@@ -12,19 +15,29 @@ export default function Chat() {
   const [isListening, setIsListening] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
+  const [feedbackType, setFeedbackType] = useState('positive');
+  const [feedbackMessage, setFeedbackMessage] = useState('');
+  const [feedbackName, setFeedbackName] = useState('');
+  const [feedbackContact, setFeedbackContact] = useState('');
+  const [feedbackStatus, setFeedbackStatus] = useState('idle');
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
-  const { messages, input, handleInputChange, handleSubmit } = useChat({
+  const { messages, input, handleInputChange, handleSubmit, setMessages } = useChat({
     onFinish: (message) => {
       // Ensure message has a createdAt timestamp
       const messageWithTimestamp = {
         ...message,
         createdAt: message.createdAt || Date.now(),
       };
-      const updatedMessages = [...messages, messageWithTimestamp];
-      localStorage.setItem('chatHistory', JSON.stringify(updatedMessages));
+      // No localStorage, Supabase will handle persistence
     }
   });
+  const [user, setUser] = useState(null);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const sidebarRef = useRef(null);
+  const [chats, setChats] = useState([]); // all chat sessions
+  const [activeChatId, setActiveChatId] = useState(null); // current chat id
 
   // Load messages from localStorage on component mount
   useEffect(() => {
@@ -100,6 +113,20 @@ export default function Chat() {
     }
   }, [isDarkMode]);
 
+  useEffect(() => {
+    const feedbackLink = document.getElementById('header-feedback-link');
+    if (feedbackLink) {
+      const onClick = (e) => {
+        e.preventDefault();
+        openFeedback();
+      };
+      feedbackLink.addEventListener('click', onClick);
+      return () => {
+        feedbackLink.removeEventListener('click', onClick);
+      };
+    }
+  }, []);
+
   const handleClearChat = () => {
     localStorage.removeItem('chatHistory');
     window.location.reload();
@@ -160,6 +187,39 @@ export default function Chat() {
     }
   };
 
+  const openFeedback = () => setIsFeedbackOpen(true);
+  const closeFeedback = () => {
+    setIsFeedbackOpen(false);
+    setFeedbackStatus('idle');
+    setFeedbackMessage('');
+    setFeedbackName('');
+    setFeedbackContact('');
+    setFeedbackType('positive');
+  };
+  const handleFeedbackSubmit = async (e) => {
+    e.preventDefault();
+    setFeedbackStatus('loading');
+    try {
+      const res = await fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: feedbackType,
+          message: feedbackMessage,
+          name: feedbackName,
+          contact: feedbackContact,
+        }),
+      });
+      if (res.ok) {
+        setFeedbackStatus('success');
+      } else {
+        setFeedbackStatus('error');
+      }
+    } catch {
+      setFeedbackStatus('error');
+    }
+  };
+
   const MicrophoneIcon = () => (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="9" y="2" width="6" height="12" rx="3" />
@@ -200,8 +260,268 @@ export default function Chat() {
     </svg>
   );
 
+  useEffect(() => {
+    // Check for existing session
+    const getSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        setUser(session.user);
+      }
+    };
+    getSession();
+    // Listen for auth changes
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user || null);
+    });
+    return () => {
+      listener.subscription.unsubscribe();
+    };
+  }, []);
+
+  // Load chat history from Supabase
+  useEffect(() => {
+    if (!user) return;
+    const loadChat = async () => {
+      setIsLoading(true);
+      const { data, error } = await supabase
+        .from('chats')
+        .select('messages')
+        .eq('user_id', user.id)
+        .single();
+      if (data && data.messages) {
+        setMessages(data.messages);
+      } else {
+        setMessages([]);
+      }
+      setIsLoading(false);
+    };
+    loadChat();
+  }, [user]);
+
+  // Save chat history to Supabase on message change
+  useEffect(() => {
+    if (!user) return;
+    const saveChat = async () => {
+      await supabase.from('chats').upsert({
+        user_id: user.id,
+        messages,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: ['user_id'] });
+    };
+    if (messages.length > 0) saveChat();
+  }, [messages, user]);
+
+  // Logout handler
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    setMessages([]);
+  };
+
+  // Sidebar close on ESC or click outside
+  useEffect(() => {
+    if (!isSidebarOpen) return;
+    function handleKeyDown(e) {
+      if (e.key === 'Escape') setIsSidebarOpen(false);
+    }
+    function handleClick(e) {
+      if (sidebarRef.current && !sidebarRef.current.contains(e.target)) {
+        setIsSidebarOpen(false);
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('mousedown', handleClick);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('mousedown', handleClick);
+    };
+  }, [isSidebarOpen]);
+
+  // Fetch all chats for user
+  useEffect(() => {
+    if (!user) return;
+    const fetchChats = async () => {
+      const { data, error } = await supabase
+        .from('chats')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('deleted', false)
+        .order('updated_at', { ascending: false });
+      if (data) setChats(data);
+    };
+    fetchChats();
+  }, [user]);
+
+  // Load messages for active chat
+  useEffect(() => {
+    if (!activeChatId) {
+      setMessages([]);
+      return;
+    }
+    const chat = chats.find(c => c.id === activeChatId);
+    if (chat) setMessages(chat.messages || []);
+  }, [activeChatId]);
+
+  // Save chat to Supabase on messages change
+  useEffect(() => {
+    if (!user || !activeChatId) return;
+    const saveChat = async () => {
+      const chat = chats.find(c => c.id === activeChatId);
+      if (!chat) return;
+      const firstPrompt = messages.find(m => m.role === 'user')?.content?.split('\n')[0] || '';
+      await supabase.from('chats').update({
+        messages,
+        updated_at: new Date().toISOString(),
+        first_prompt: firstPrompt,
+      }).eq('id', activeChatId);
+      // Refresh chats
+      const { data } = await supabase
+        .from('chats')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('deleted', false)
+        .order('updated_at', { ascending: false });
+      if (data) setChats(data);
+    };
+    if (messages.length > 0) saveChat();
+  }, [messages, user, activeChatId]);
+
+  // New Chat handler
+  const handleNewChat = async () => {
+    const { data, error } = await supabase.from('chats').insert({
+      user_id: user.id,
+      messages: [],
+      first_prompt: '',
+    }).select();
+    if (data && data[0]) {
+      setChats([data[0], ...chats]);
+      setActiveChatId(data[0].id);
+      setMessages([]);
+    }
+  };
+
+  // Select chat handler
+  const handleSelectChat = (chatId) => {
+    setActiveChatId(chatId);
+    setIsSidebarOpen(false);
+  };
+
+  // Delete chat handler
+  const handleDeleteChat = async (chatId) => {
+    if (!window.confirm('Delete this chat?')) return;
+    await supabase.from('chats').update({ deleted: true }).eq('id', chatId);
+    setChats(chats.filter(c => c.id !== chatId));
+    if (activeChatId === chatId) {
+      setActiveChatId(null);
+      setMessages([]);
+    }
+  };
+
+  // Group chats by date
+  const groupChatsByDate = (chats) => {
+    const groups = {};
+    const now = new Date();
+    chats.forEach(chat => {
+      const d = new Date(chat.created_at);
+      let group = 'Earlier';
+      if (d.toDateString() === now.toDateString()) group = 'Today';
+      else if (now - d < 7 * 24 * 60 * 60 * 1000) group = 'This Week';
+      if (!groups[group]) groups[group] = [];
+      groups[group].push(chat);
+    });
+    return groups;
+  };
+  const groupedChats = groupChatsByDate(chats);
+
+  // Show AuthForm if not logged in
+  if (!user) {
+    return <AuthForm onAuth={session => {
+      if (session && session.user) {
+        setUser(session.user);
+      } else {
+        setUser(null);
+      }
+    }} />;
+  }
+
   return (
     <div className="chatbot">
+      {/* Hamburger menu */}
+      {!isSidebarOpen && (
+        <button
+          className="sidebar-hamburger"
+          aria-label="Open menu"
+          onClick={() => setIsSidebarOpen(open => !open)}
+        >
+          <span className="hamburger-bar" />
+          <span className="hamburger-bar" />
+          <span className="hamburger-bar" />
+        </button>
+      )}
+
+      {/* Sidebar overlay */}
+      <div className={`sidebar-overlay${isSidebarOpen ? ' open' : ''}`}></div>
+      {/* Sidebar */}
+      <nav
+        className={`sidebar${isSidebarOpen ? ' open' : ''}`}
+        ref={sidebarRef}
+        aria-label="Sidebar menu"
+        tabIndex="-1"
+      >
+        <button
+          className="sidebar-close"
+          aria-label="Close menu"
+          onClick={() => setIsSidebarOpen(false)}
+        >×</button>
+        <div className="sidebar-content">
+          {/* User email */}
+          <div className="sidebar-email">{user.email}</div>
+          <button className="sidebar-item" onClick={handleNewChat} style={{marginTop: '0.5rem', marginBottom: '0.5rem', fontWeight: 600, color: '#800000'}}>+ New Chat</button>
+          {/* Chat list grouped by date */}
+          {Object.keys(groupedChats).map(group => (
+            <div key={group} style={{marginBottom: '1rem'}}>
+              <div style={{fontSize: '0.95rem', fontWeight: 600, color: '#888', margin: '0.5rem 0 0.2rem 0'}}>{group}</div>
+              {groupedChats[group].map(chat => (
+                <div key={chat.id} className={`sidebar-item${activeChatId === chat.id ? ' active' : ''}`} style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: activeChatId === chat.id ? '#f5e6e6' : undefined}}>
+                  <span style={{flex: 1, cursor: 'pointer'}} onClick={() => handleSelectChat(chat.id)}>
+                    {chat.first_prompt ? chat.first_prompt.slice(0, 40) : <em>New chat</em>}
+                    <span style={{display: 'block', fontSize: '0.8em', color: '#aaa'}}>{new Date(chat.created_at).toLocaleDateString()}</span>
+                  </span>
+                  <button onClick={() => handleDeleteChat(chat.id)} style={{background: 'none', border: 'none', color: '#c00', marginLeft: 8, cursor: 'pointer'}} title="Delete chat" aria-label="Delete chat">
+                    🗑️
+                  </button>
+                </div>
+              ))}
+            </div>
+          ))}
+          <hr className="sidebar-divider" />
+          {/* Feedback and dark mode toggle */}
+          <button
+            className="sidebar-item"
+            onClick={() => {
+              setIsSidebarOpen(false);
+              openFeedback();
+            }}
+          >
+            Feedback
+          </button>
+          <button
+            id="dark-mode-toggle"
+            className="sidebar-item"
+            onClick={() => setIsDarkMode(prev => !prev)}
+            aria-label="Toggle dark mode"
+          >
+            {isDarkMode ? 'Light mode' : 'Dark mode'}
+          </button>
+          <hr className="sidebar-divider" />
+          {/* Logout */}
+          <button className="sidebar-item sidebar-logout" onClick={handleLogout}>
+            Logout
+          </button>
+        </div>
+      </nav>
+
+      {/* Main content (rest of chat UI) */}
       <Image
         src="/jackbot-img.jpeg"
         className="image"
@@ -304,6 +624,43 @@ export default function Chat() {
           <div className="loading-label">Loading...</div>
         )}
       </div>
+      {isFeedbackOpen && (
+        <div className="feedback-modal">
+          <div className="feedback-modal-content">
+            <button className="feedback-modal-close" onClick={closeFeedback} aria-label="Close feedback form">×</button>
+            {feedbackStatus === 'success' ? (
+              <div className="feedback-thankyou">Thank you for your feedback!</div>
+            ) : (
+              <form className="feedback-form" onSubmit={handleFeedbackSubmit}>
+                <label>
+                  Type:
+                  <select value={feedbackType} onChange={e => setFeedbackType(e.target.value)}>
+                    <option value="positive">Positive</option>
+                    <option value="feature">Feature Request</option>
+                    <option value="bug">Bug</option>
+                  </select>
+                </label>
+                <label>
+                  Message:
+                  <textarea value={feedbackMessage} onChange={e => setFeedbackMessage(e.target.value)} required rows={4} />
+                </label>
+                <label>
+                  Name (optional):
+                  <input type="text" value={feedbackName} onChange={e => setFeedbackName(e.target.value)} />
+                </label>
+                <label>
+                  Contact (optional):
+                  <input type="text" value={feedbackContact} onChange={e => setFeedbackContact(e.target.value)} placeholder="Email or phone" />
+                </label>
+                <button type="submit" className="send-button" disabled={feedbackStatus==='loading'}>
+                  {feedbackStatus==='loading' ? 'Sending...' : 'Send Feedback'}
+                </button>
+                {feedbackStatus==='error' && <div className="feedback-error">Failed to send. Please try again.</div>}
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
