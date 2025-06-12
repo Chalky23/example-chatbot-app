@@ -8,6 +8,7 @@ import ReactMarkdown from 'react-markdown';
 export default function Chat() {
   const [isLoading, setIsLoading] = useState(true);
   const [copiedMessageId, setCopiedMessageId] = useState(null);
+  const [isDarkMode, setIsDarkMode] = useState(false);
   const { messages, input, handleInputChange, handleSubmit } = useChat({
     onFinish: (message) => {
       // Ensure message has a createdAt timestamp
@@ -34,6 +35,65 @@ export default function Chat() {
     }
     setIsLoading(false);
   }, []);
+
+  useEffect(() => {
+    const clearChatLink = document.getElementById('clear-chat-link');
+    if (clearChatLink) {
+      const onClick = (e) => {
+        e.preventDefault();
+        handleClearChat();
+      };
+      const onKeyDown = (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          handleClearChat();
+        }
+      };
+      clearChatLink.addEventListener('click', onClick);
+      clearChatLink.addEventListener('keydown', onKeyDown);
+      return () => {
+        clearChatLink.removeEventListener('click', onClick);
+        clearChatLink.removeEventListener('keydown', onKeyDown);
+      };
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isDarkMode) {
+      document.body.classList.add('dark-mode');
+    } else {
+      document.body.classList.remove('dark-mode');
+    }
+  }, [isDarkMode]);
+
+  useEffect(() => {
+    const darkModeToggle = document.getElementById('dark-mode-toggle');
+    if (darkModeToggle) {
+      const onClick = (e) => {
+        e.preventDefault();
+        setIsDarkMode(prev => !prev);
+      };
+      const onKeyDown = (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          setIsDarkMode(prev => !prev);
+        }
+      };
+      darkModeToggle.addEventListener('click', onClick);
+      darkModeToggle.addEventListener('keydown', onKeyDown);
+      return () => {
+        darkModeToggle.removeEventListener('click', onClick);
+        darkModeToggle.removeEventListener('keydown', onKeyDown);
+      };
+    }
+  }, []);
+
+  useEffect(() => {
+    const darkModeToggle = document.getElementById('dark-mode-toggle');
+    if (darkModeToggle) {
+      darkModeToggle.textContent = isDarkMode ? 'Light mode' : 'Dark mode';
+    }
+  }, [isDarkMode]);
 
   const handleClearChat = () => {
     localStorage.removeItem('chatHistory');
@@ -170,9 +230,6 @@ export default function Chat() {
           />
           <button type="submit" className="send-button">
             Send
-          </button>
-          <button type="button" onClick={handleClearChat} className="clear-button">
-            Clear
           </button>
         </form>
       </div>
