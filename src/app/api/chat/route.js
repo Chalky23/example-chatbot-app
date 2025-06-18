@@ -11,10 +11,33 @@ export const dynamic = "force-dynamic";
 export async function POST(req) {
   try {
     const body = await req.json();
-    const { messages } = body || {};
+    const { messages, userId } = body || {};
+    
     if (!messages || !Array.isArray(messages)) {
       return new Response(JSON.stringify({ error: 'Invalid or missing messages array.' }), {
         status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Use userId if present, otherwise fallback to IP or 'anonymous'
+    let rateLimitKey = userId;
+    if (!rateLimitKey) {
+      // Try to use IP address from headers (may not always be available)
+      rateLimitKey = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'anonymous';
+    }
+
+    // Check rate limit
+    const rateLimitRes = await fetch(`${req.nextUrl.origin}/api/rate-limit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: rateLimitKey }),
+    });
+
+    if (!rateLimitRes.ok) {
+      const rateLimitData = await rateLimitRes.json();
+      return new Response(JSON.stringify(rateLimitData), {
+        status: rateLimitRes.status,
         headers: { 'Content-Type': 'application/json' },
       });
     }

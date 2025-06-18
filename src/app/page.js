@@ -7,12 +7,59 @@ import ReactMarkdown from 'react-markdown';
 import { supabase } from '../utils/supabaseClient';
 import AuthForm from './auth/AuthForm';
 import './page.css';
+import { v4 as uuidv4 } from 'uuid';
 
-export default function Chat() {
+const CopyIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+  </svg>
+);
+
+const CheckIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="20 6 9 17 4 12"></polyline>
+  </svg>
+);
+
+const HowToGuide = () => {
+  const [isOpen, setIsOpen] = useState(false);
+  
+  return (
+    <div className="how-to-guide">
+      <button 
+        className="sidebar-item"
+        onClick={() => setIsOpen(!isOpen)}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+      >
+        How to use JackBot
+        <span style={{ fontSize: '1.2rem' }}>{isOpen ? '−' : '+'}</span>
+      </button>
+      {isOpen && (
+        <div className="how-to-content" style={{ padding: '0.5rem 0 0.5rem 1rem' }}>
+          <div style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.5rem' }}>
+            <p>• Type your message in the input field</p>
+            <p>• Use the microphone button for voice input</p>
+            <p>• Click the copy button to copy responses</p>
+            <p>• Create new chats using the + button</p>
+            <p>• Switch between dark/light mode</p>
+            <p>• Send feedback using the feedback button</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const Chat = () => {
+  // Initialize all state first
+  const [user, setUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [chats, setChats] = useState([]);
+  const [activeChatId, setActiveChatId] = useState(null);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState(null);
   const [isDarkMode, setIsDarkMode] = useState(false);
-  const [isListening, setIsListening] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
@@ -21,401 +68,200 @@ export default function Chat() {
   const [feedbackName, setFeedbackName] = useState('');
   const [feedbackContact, setFeedbackContact] = useState('');
   const [feedbackStatus, setFeedbackStatus] = useState('idle');
+  
+  const sidebarRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
+  const chatContainerRef = useRef(null);
+
+  // Auto-scroll function
+  const scrollToBottom = () => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  };
+
+  // Initialize chat hook with basic configuration
   const { messages, input, handleInputChange, handleSubmit, setMessages } = useChat({
-    onFinish: (message) => {
-      // Ensure message has a createdAt timestamp
-      const messageWithTimestamp = {
-        ...message,
-        createdAt: message.createdAt || Date.now(),
-      };
-      // No localStorage, Supabase will handle persistence
+    api: '/api/chat',
+    initialMessages: [],
+    onFinish: async (message) => {
+      // Only save to Supabase after the message is complete
+      if (!activeChatId || !user) return;
+
+      const updatedMessages = [...messages, { ...message, createdAt: Date.now() }];
+      const firstPrompt = updatedMessages.find(m => m.role === 'user')?.content?.split('\n')[0] || '';
+
+      try {
+        const { error } = await supabase
+          .from('chats')
+          .update({
+            messages: updatedMessages,
+            first_prompt: firstPrompt,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', activeChatId);
+
+        if (error) {
+          console.error('Error updating chat:', error);
+        }
+
+        // Scroll to bottom after message is complete
+        scrollToBottom();
+      } catch (err) {
+        console.error('Error saving chat:', err);
+      }
     }
   });
-  const [user, setUser] = useState(null);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const sidebarRef = useRef(null);
-  const [chats, setChats] = useState([]); // all chat sessions
-  const [activeChatId, setActiveChatId] = useState(null); // current chat id
 
-  // Load messages from localStorage on component mount
+  // Auto-scroll when messages change
   useEffect(() => {
-    const savedMessages = localStorage.getItem('chatHistory');
-    if (savedMessages) {
-      const parsedMessages = JSON.parse(savedMessages);
-      // Update messages with saved history
-      parsedMessages.forEach((msg) => {
-        if (!messages.find((m) => m.id === msg.id)) {
-          messages.push(msg);
-        }
-      });
-    }
-    setIsLoading(false);
-  }, []);
+    scrollToBottom();
+  }, [messages]);
 
+  // Check for existing session
   useEffect(() => {
-    const clearChatLink = document.getElementById('clear-chat-link');
-    if (clearChatLink) {
-      const onClick = (e) => {
-        e.preventDefault();
-        handleClearChat();
-      };
-      const onKeyDown = (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          handleClearChat();
-        }
-      };
-      clearChatLink.addEventListener('click', onClick);
-      clearChatLink.addEventListener('keydown', onKeyDown);
-      return () => {
-        clearChatLink.removeEventListener('click', onClick);
-        clearChatLink.removeEventListener('keydown', onKeyDown);
-      };
-    }
-  }, []);
-
-  useEffect(() => {
-    if (isDarkMode) {
-      document.body.classList.add('dark-mode');
-    } else {
-      document.body.classList.remove('dark-mode');
-    }
-  }, [isDarkMode]);
-
-  useEffect(() => {
-    const darkModeToggle = document.getElementById('dark-mode-toggle');
-    if (darkModeToggle) {
-      const onClick = (e) => {
-        e.preventDefault();
-        setIsDarkMode(prev => !prev);
-      };
-      const onKeyDown = (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          setIsDarkMode(prev => !prev);
-        }
-      };
-      darkModeToggle.addEventListener('click', onClick);
-      darkModeToggle.addEventListener('keydown', onKeyDown);
-      return () => {
-        darkModeToggle.removeEventListener('click', onClick);
-        darkModeToggle.removeEventListener('keydown', onKeyDown);
-      };
-    }
-  }, []);
-
-  useEffect(() => {
-    const darkModeToggle = document.getElementById('dark-mode-toggle');
-    if (darkModeToggle) {
-      darkModeToggle.textContent = isDarkMode ? 'Light mode' : 'Dark mode';
-    }
-  }, [isDarkMode]);
-
-  useEffect(() => {
-    const feedbackLink = document.getElementById('header-feedback-link');
-    if (feedbackLink) {
-      const onClick = (e) => {
-        e.preventDefault();
-        openFeedback();
-      };
-      feedbackLink.addEventListener('click', onClick);
-      return () => {
-        feedbackLink.removeEventListener('click', onClick);
-      };
-    }
-  }, []);
-
-  const handleClearChat = () => {
-    localStorage.removeItem('chatHistory');
-    window.location.reload();
-  };
-
-  const handleCopyMessage = async (content, messageId) => {
-    try {
-      await navigator.clipboard.writeText(content);
-      setCopiedMessageId(messageId);
-      // Reset the copied state after 2 seconds
-      setTimeout(() => setCopiedMessageId(null), 2000);
-    } catch (err) {
-      console.error('Failed to copy message:', err);
-    }
-  };
-
-  const handleRecordClick = async () => {
-    if (isRecording) {
-      // Stop recording
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-      return;
-    }
-    // Start recording
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new window.MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-      mediaRecorder.onstop = async () => {
-        setIsTranscribing(true);
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const formData = new FormData();
-        formData.append('audio', audioBlob, 'recording.webm');
-        try {
-          const response = await fetch('/api/transcribe', {
-            method: 'POST',
-            body: formData,
-          });
-          const data = await response.json();
-          if (data.text) {
-            handleInputChange({ target: { value: data.text } });
-          }
-        } catch (err) {
-          alert('Transcription failed.');
-        }
-        setIsTranscribing(false);
-      };
-      mediaRecorder.start();
-      setIsRecording(true);
-    } catch (err) {
-      alert('Could not access microphone.');
-    }
-  };
-
-  const openFeedback = () => setIsFeedbackOpen(true);
-  const closeFeedback = () => {
-    setIsFeedbackOpen(false);
-    setFeedbackStatus('idle');
-    setFeedbackMessage('');
-    setFeedbackName('');
-    setFeedbackContact('');
-    setFeedbackType('positive');
-  };
-  const handleFeedbackSubmit = async (e) => {
-    e.preventDefault();
-    setFeedbackStatus('loading');
-    try {
-      const res = await fetch('/api/feedback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: feedbackType,
-          message: feedbackMessage,
-          name: feedbackName,
-          contact: feedbackContact,
-        }),
-      });
-      if (res.ok) {
-        setFeedbackStatus('success');
-      } else {
-        setFeedbackStatus('error');
-      }
-    } catch {
-      setFeedbackStatus('error');
-    }
-  };
-
-  const MicrophoneIcon = () => (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="9" y="2" width="6" height="12" rx="3" />
-      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-      <line x1="12" y1="22" x2="12" y2="16" />
-      <line x1="8" y1="22" x2="16" y2="22" />
-    </svg>
-  );
-
-  const CopyIcon = () => (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-    </svg>
-  );
-
-  const CheckIcon = () => (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <polyline points="20 6 9 17 4 12" />
-    </svg>
-  );
-
-  useEffect(() => {
-    // Check for existing session
     const getSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
         setUser(session.user);
       }
+      setIsLoading(false);
     };
     getSession();
-    // Listen for auth changes
+
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user || null);
     });
+
     return () => {
-      listener.subscription.unsubscribe();
+      listener?.subscription?.unsubscribe();
     };
   }, []);
 
-  // Load chat history from Supabase
+  // Load user's chats
   useEffect(() => {
     if (!user) return;
-    const loadChat = async () => {
-      setIsLoading(true);
+
+    const loadChats = async () => {
       const { data, error } = await supabase
         .from('chats')
-        .select('messages')
+        .select('*')
         .eq('user_id', user.id)
-        .single();
-      if (data && data.messages) {
-        setMessages(data.messages);
-      } else {
-        setMessages([]);
+        .eq('deleted', false)
+        .order('updated_at', { ascending: false });
+
+      if (error) {
+        console.error('Error loading chats:', error);
+        return;
       }
-      setIsLoading(false);
+
+      setChats(data || []);
+      if (data && data.length > 0 && !activeChatId) {
+        setActiveChatId(data[0].id);
+        setMessages(data[0].messages || []);
+      }
     };
-    loadChat();
+
+    loadChats();
   }, [user]);
 
-  // Save chat history to Supabase on message change
-  useEffect(() => {
+  // Handle new chat creation
+  const handleNewChat = async () => {
     if (!user) return;
-    const saveChat = async () => {
-      await supabase.from('chats').upsert({
-        user_id: user.id,
-        messages,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: ['user_id'] });
-    };
-    if (messages.length > 0) saveChat();
-  }, [messages, user]);
 
-  // Logout handler
+    const newId = uuidv4();
+    const { data, error } = await supabase
+      .from('chats')
+      .insert([{
+        id: newId,
+        user_id: user.id,
+        messages: [],
+        first_prompt: null,
+        title: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        deleted: false
+      }])
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error creating new chat:', error);
+      return;
+    }
+
+    setChats(prevChats => [data, ...prevChats]);
+    setActiveChatId(data.id);
+    setMessages([]);
+  };
+
+  // Handle chat selection
+  const handleSelectChat = async (chatId) => {
+    const selectedChat = chats.find(c => c.id === chatId);
+    if (selectedChat) {
+      setActiveChatId(chatId);
+      setMessages(selectedChat.messages || []);
+      setIsSidebarOpen(false);
+    }
+  };
+
+  // Handle chat deletion
+  const handleDeleteChat = async (chatId) => {
+    if (!window.confirm('Delete this chat?')) return;
+
+    const { error } = await supabase
+      .from('chats')
+      .update({ deleted: true })
+      .eq('id', chatId);
+
+    if (error) {
+      console.error('Error deleting chat:', error);
+      return;
+    }
+
+    setChats(prevChats => prevChats.filter(c => c.id !== chatId));
+    if (activeChatId === chatId) {
+      const remainingChats = chats.filter(c => c.id !== chatId);
+      if (remainingChats.length > 0) {
+        setActiveChatId(remainingChats[0].id);
+        setMessages(remainingChats[0].messages || []);
+      } else {
+        setActiveChatId(null);
+        setMessages([]);
+      }
+    }
+  };
+
+  // Handle message submission
+  const handleMessageSubmit = async (e) => {
+    e.preventDefault();
+    if (!input.trim() || !activeChatId) return;
+
+    try {
+      await handleSubmit(e);
+    } catch (error) {
+      console.error('Error sending message:', error);
+    }
+  };
+
+  // Handle logout
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setUser(null);
     setMessages([]);
+    setChats([]);
+    setActiveChatId(null);
   };
 
-  // Sidebar close on ESC or click outside
-  useEffect(() => {
-    if (!isSidebarOpen) return;
-    function handleKeyDown(e) {
-      if (e.key === 'Escape') setIsSidebarOpen(false);
-    }
-    function handleClick(e) {
-      if (sidebarRef.current && !sidebarRef.current.contains(e.target)) {
-        setIsSidebarOpen(false);
+  // Show AuthForm if not logged in
+  if (!user) {
+    return <AuthForm onAuth={session => {
+      if (session?.user) {
+        setUser(session.user);
       }
-    }
-    document.addEventListener('keydown', handleKeyDown);
-    document.addEventListener('mousedown', handleClick);
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-      document.removeEventListener('mousedown', handleClick);
-    };
-  }, [isSidebarOpen]);
-
-  // Fetch all chats for user
-  useEffect(() => {
-    if (!user) return;
-    const fetchChats = async () => {
-      const { data, error } = await supabase
-        .from('chats')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('deleted', false)
-        .order('updated_at', { ascending: false });
-      if (data) setChats(data);
-    };
-    fetchChats();
-  }, [user]);
-
-  // Load messages for active chat
-  useEffect(() => {
-    if (!activeChatId) {
-      setMessages([]);
-      return;
-    }
-    const chat = chats.find(c => c.id === activeChatId);
-    if (chat) setMessages(chat.messages || []);
-  }, [activeChatId]);
-
-  // Save chat to Supabase on messages change
-  useEffect(() => {
-    if (!user || !activeChatId) return;
-    const saveChat = async () => {
-      const chat = chats.find(c => c.id === activeChatId);
-      if (!chat) return;
-      const firstPrompt = messages.find(m => m.role === 'user')?.content?.split('\n')[0] || '';
-      await supabase.from('chats').update({
-        messages,
-        updated_at: new Date().toISOString(),
-        first_prompt: firstPrompt,
-      }).eq('id', activeChatId);
-      // Refresh chats
-      const { data } = await supabase
-        .from('chats')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('deleted', false)
-        .order('updated_at', { ascending: false });
-      if (data) setChats(data);
-    };
-    if (messages.length > 0) saveChat();
-  }, [messages, user, activeChatId]);
-
-  // New Chat handler
-  const handleNewChat = async () => {
-    const { data, error } = await supabase.from('chats').insert({
-      user_id: user.id,
-      messages: [],
-      first_prompt: '',
-    }).select();
-    if (data && data[0]) {
-      setChats([data[0], ...chats]);
-      setActiveChatId(data[0].id);
-      setMessages([]);
-    }
-  };
-
-  // Select chat handler
-  const handleSelectChat = (chatId) => {
-    setActiveChatId(chatId);
-    setIsSidebarOpen(false);
-  };
-
-  // Delete chat handler
-  const handleDeleteChat = async (chatId) => {
-    if (!window.confirm('Delete this chat?')) return;
-    await supabase.from('chats').update({ deleted: true }).eq('id', chatId);
-    setChats(chats.filter(c => c.id !== chatId));
-    if (activeChatId === chatId) {
-      setActiveChatId(null);
-      setMessages([]);
-    }
-  };
+    }} />;
+  }
 
   // Group chats by date
   const groupChatsByDate = (chats) => {
@@ -433,17 +279,7 @@ export default function Chat() {
   };
   const groupedChats = groupChatsByDate(chats);
 
-  // Show AuthForm if not logged in
-  if (!user) {
-    return <AuthForm onAuth={session => {
-      if (session && session.user) {
-        setUser(session.user);
-      } else {
-        setUser(null);
-      }
-    }} />;
-  }
-
+  // Rest of your component JSX...
   return (
     <div className="chatbot">
       {/* Hamburger menu */}
@@ -477,6 +313,7 @@ export default function Chat() {
           {/* User email */}
           <div className="sidebar-email">{user.email}</div>
           <button className="sidebar-item" onClick={handleNewChat} style={{marginTop: '0.5rem', marginBottom: '0.5rem', fontWeight: 600, color: '#800000'}}>+ New Chat</button>
+          
           {/* Chat list grouped by date */}
           {Object.keys(groupedChats).map(group => (
             <div key={group} style={{marginBottom: '1rem'}}>
@@ -495,7 +332,8 @@ export default function Chat() {
             </div>
           ))}
           <hr className="sidebar-divider" />
-          {/* Feedback and dark mode toggle */}
+          {/* How to guide, Feedback and dark mode toggle */}
+          <HowToGuide />
           <button
             className="sidebar-item"
             onClick={() => {
@@ -530,99 +368,116 @@ export default function Chat() {
         alt="jackbot image"
       />
       <h1>Hi, I&apos;m JackBot!</h1>
-      <div className="chat-container">
-        {messages.map((m) => (
-          <div
-            key={m.id}
-            className={`message ${m.role === "user" ? "user-message" : "bot-message"}`}
-          >
-            <div className="message-content">
-              <div className="message-header">
-                <div className="message-role">{m.role === "user" ? "You" : "JackBot"}</div>
-                {m.role === "assistant" && (
-                  <button
-                    onClick={() => handleCopyMessage(m.content, m.id)}
-                    className={`copy-button ${copiedMessageId === m.id ? 'copied' : ''}`}
-                    title="Copy message"
-                    aria-label={copiedMessageId === m.id ? 'Copied!' : 'Copy message'}
-                  >
-                    {copiedMessageId === m.id ? <CheckIcon /> : <CopyIcon />}
-                  </button>
-                )}
-              </div>
-              <div className="message-text">
-                <ReactMarkdown
-                  components={{
-                    // Style code blocks
-                    code({ node, inline, className, children, ...props }) {
-                      return (
-                        <code className={`${className} ${inline ? 'inline-code' : 'code-block'}`} {...props}>
-                          {children}
-                        </code>
-                      );
-                    },
-                    // Style links
-                    a({ node, children, ...props }) {
-                      return (
-                        <a className="markdown-link" {...props}>
-                          {children}
-                        </a>
-                      );
-                    },
-                    // Style lists
-                    ul({ node, children, ...props }) {
-                      return (
-                        <ul className="markdown-list" {...props}>
-                          {children}
-                        </ul>
-                      );
-                    },
-                    // Style blockquotes
-                    blockquote({ node, children, ...props }) {
-                      return (
-                        <blockquote className="markdown-blockquote" {...props}>
-                          {children}
-                        </blockquote>
-                      );
-                    }
-                  }}
-                >
-                  {m.content}
-                </ReactMarkdown>
-              </div>
-              <div className="message-timestamp">
-                {new Date(m.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+      <div className="chat-container" ref={chatContainerRef}>
+        {isLoading ? (
+          <>
+            <div className="message skeleton-message">
+              <div className="message-content skeleton-content">
+                <div className="skeleton-header"></div>
+                <div className="skeleton-text"></div>
+                <div className="skeleton-text"></div>
+                <div className="skeleton-text" style={{ width: '60%' }}></div>
               </div>
             </div>
-          </div>
-        ))}
+            <div className="message skeleton-message">
+              <div className="message-content skeleton-content">
+                <div className="skeleton-header"></div>
+                <div className="skeleton-text"></div>
+                <div className="skeleton-text"></div>
+                <div className="skeleton-text" style={{ width: '60%' }}></div>
+              </div>
+            </div>
+            <div className="message skeleton-message">
+              <div className="message-content skeleton-content">
+                <div className="skeleton-header"></div>
+                <div className="skeleton-text"></div>
+                <div className="skeleton-text"></div>
+                <div className="skeleton-text" style={{ width: '60%' }}></div>
+              </div>
+            </div>
+          </>
+        ) : (
+          messages.map((m) => (
+            <div
+              key={m.id}
+              id={`message-${m.id}`}
+              className={`message ${m.role === "user" ? "user-message" : "bot-message"}`}
+            >
+              <div className="message-content">
+                <div className="message-header">
+                  <div className="message-role">{m.role === "user" ? "You" : "JackBot"}</div>
+                  {m.role === "assistant" && (
+                    <button
+                      onClick={() => handleCopyMessage(m.content, m.id)}
+                      className={`copy-button ${copiedMessageId === m.id ? 'copied' : ''}`}
+                      title="Copy message"
+                      aria-label={copiedMessageId === m.id ? 'Copied!' : 'Copy message'}
+                    >
+                      {copiedMessageId === m.id ? <CheckIcon /> : <CopyIcon />}
+                    </button>
+                  )}
+                </div>
+                <div className="message-text">
+                  <ReactMarkdown
+                    components={{
+                      // Style code blocks
+                      code({ node, inline, className, children, ...props }) {
+                        return (
+                          <code className={`${className} ${inline ? 'inline-code' : 'code-block'}`} {...props}>
+                            {children}
+                          </code>
+                        );
+                      },
+                      // Style links
+                      a({ node, children, ...props }) {
+                        return (
+                          <a className="markdown-link" {...props}>
+                            {children}
+                          </a>
+                        );
+                      },
+                      // Style lists
+                      ul({ node, children, ...props }) {
+                        return (
+                          <ul className="markdown-list" {...props}>
+                            {children}
+                          </ul>
+                        );
+                      },
+                      // Style blockquotes
+                      blockquote({ node, children, ...props }) {
+                        return (
+                          <blockquote className="markdown-blockquote" {...props}>
+                            {children}
+                          </blockquote>
+                        );
+                      }
+                    }}
+                  >
+                    {m.content}
+                  </ReactMarkdown>
+                </div>
+                <div className="message-timestamp">
+                  {new Date(m.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </div>
+              </div>
+            </div>
+          ))
+        )}
       </div>
 
       <div className="chat-controls">
-        <form onSubmit={handleSubmit} className="input-form">
+        <form onSubmit={handleMessageSubmit} className="input-form">
           <input
             className="inputField"
             value={input}
             placeholder="Ask me anything..."
             onChange={handleInputChange}
           />
-          <button
-            type="button"
-            onClick={handleRecordClick}
-            className={`mic-button ${isRecording ? 'listening' : ''}`}
-            title={isRecording ? 'Stop recording' : 'Record voice input'}
-            aria-label={isRecording ? 'Stop recording' : 'Record voice input'}
-            disabled={isTranscribing}
-          >
-            <MicrophoneIcon />
-          </button>
           <button type="submit" className="send-button">
             Send
           </button>
         </form>
-        {isTranscribing && (
-          <div className="loading-label">Loading...</div>
-        )}
       </div>
       {isFeedbackOpen && (
         <div className="feedback-modal">
@@ -664,3 +519,5 @@ export default function Chat() {
     </div>
   );
 }
+
+export default Chat;
