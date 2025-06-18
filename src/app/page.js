@@ -68,6 +68,7 @@ const Chat = () => {
   const [feedbackName, setFeedbackName] = useState('');
   const [feedbackContact, setFeedbackContact] = useState('');
   const [feedbackStatus, setFeedbackStatus] = useState('idle');
+  const [isHeaderCompact, setIsHeaderCompact] = useState(false);
   
   const sidebarRef = useRef(null);
   const mediaRecorderRef = useRef(null);
@@ -85,28 +86,75 @@ const Chat = () => {
   const { messages, input, handleInputChange, handleSubmit, setMessages } = useChat({
     api: '/api/chat',
     initialMessages: [],
-    onFinish: async (message) => {
-      // Only save to Supabase after the message is complete
+    onResponse: async (response) => {
       if (!activeChatId || !user) return;
 
+      const lastUserMessage = messages[messages.length - 1];
+      if (lastUserMessage?.role === 'user') {
+        const updatedMessages = [...messages];
+        try {
+          // Save message and set first_prompt if needed
+          let updateFields = {
+            messages: updatedMessages,
+            updated_at: new Date().toISOString()
+          };
+          // Always check the database for first_prompt
+          const { data: chatData, error: fetchError } = await supabase
+            .from('chats')
+            .select('first_prompt')
+            .eq('id', activeChatId)
+            .single();
+          if (fetchError) {
+            console.error('Error fetching chat for first_prompt:', fetchError);
+            return;
+          }
+          if (!chatData.first_prompt) {
+            updateFields.first_prompt = lastUserMessage.content.split('\n')[0] || '';
+          }
+          const { error } = await supabase
+            .from('chats')
+            .update(updateFields)
+            .eq('id', activeChatId);
+          if (error) {
+            console.error('Error updating chat with user message:', error);
+          }
+          // Fetch the updated chat and update local state
+          const { data: updatedChat, error: updateFetchError } = await supabase
+            .from('chats')
+            .select('*')
+            .eq('id', activeChatId)
+            .single();
+          if (!updateFetchError && updatedChat) {
+            setChats(prevChats => prevChats.map(c => c.id === activeChatId ? updatedChat : c));
+          }
+        } catch (err) {
+          console.error('Error saving user message:', err);
+        }
+      }
+    },
+    onFinish: async (message) => {
+      if (!activeChatId || !user) return;
       const updatedMessages = [...messages, { ...message, createdAt: Date.now() }];
-      const firstPrompt = updatedMessages.find(m => m.role === 'user')?.content?.split('\n')[0] || '';
-
       try {
         const { error } = await supabase
           .from('chats')
           .update({
             messages: updatedMessages,
-            first_prompt: firstPrompt,
             updated_at: new Date().toISOString()
           })
           .eq('id', activeChatId);
-
         if (error) {
           console.error('Error updating chat:', error);
         }
-
-        // Scroll to bottom after message is complete
+        // Fetch the updated chat and update local state
+        const { data: updatedChat, error: updateFetchError } = await supabase
+          .from('chats')
+          .select('*')
+          .eq('id', activeChatId)
+          .single();
+        if (!updateFetchError && updatedChat) {
+          setChats(prevChats => prevChats.map(c => c.id === activeChatId ? updatedChat : c));
+        }
         scrollToBottom();
       } catch (err) {
         console.error('Error saving chat:', err);
@@ -117,6 +165,11 @@ const Chat = () => {
   // Auto-scroll when messages change
   useEffect(() => {
     scrollToBottom();
+  }, [messages]);
+
+  // Update header state when messages change
+  useEffect(() => {
+    setIsHeaderCompact(messages.length > 0);
   }, [messages]);
 
   // Check for existing session
@@ -237,7 +290,6 @@ const Chat = () => {
   const handleMessageSubmit = async (e) => {
     e.preventDefault();
     if (!input.trim() || !activeChatId) return;
-
     try {
       await handleSubmit(e);
     } catch (error) {
@@ -296,7 +348,11 @@ const Chat = () => {
       )}
 
       {/* Sidebar overlay */}
-      <div className={`sidebar-overlay${isSidebarOpen ? ' open' : ''}`}></div>
+      <div
+        className={`sidebar-overlay${isSidebarOpen ? ' open' : ''}`}
+        onClick={() => setIsSidebarOpen(false)}
+        style={{ cursor: isSidebarOpen ? 'pointer' : 'default' }}
+      ></div>
       {/* Sidebar */}
       <nav
         className={`sidebar${isSidebarOpen ? ' open' : ''}`}
@@ -359,15 +415,17 @@ const Chat = () => {
         </div>
       </nav>
 
-      {/* Main content (rest of chat UI) */}
-      <Image
-        src="/jackbot-img.jpeg"
-        className="image"
-        width={200}
-        height={200}
-        alt="jackbot image"
-      />
-      <h1>Hi, I&apos;m JackBot!</h1>
+      <div className={`header-content ${isHeaderCompact ? 'compact' : ''}`}>
+        <Image
+          src="/jackbot-img.jpeg"
+          className="image"
+          width={200}
+          height={200}
+          alt="jackbot image"
+        />
+        <h1>{isHeaderCompact ? 'JackBot' : "Hi, I'm JackBot!"}</h1>
+      </div>
+
       <div className="chat-container" ref={chatContainerRef}>
         {isLoading ? (
           <>
@@ -466,7 +524,7 @@ const Chat = () => {
         )}
       </div>
 
-      <div className="chat-controls">
+      <div className="input-container">
         <form onSubmit={handleMessageSubmit} className="input-form">
           <input
             className="inputField"
